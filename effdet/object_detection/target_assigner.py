@@ -83,7 +83,7 @@ class TargetAssigner(object):
             self._unmatched_cls_target = 0.
         self._keypoints_field_name = keypoints_field_name
 
-    def assign(self, anchors: BoxList, groundtruth_boxes: BoxList, groundtruth_labels=None, groundtruth_weights=None):
+    def assign(self, anchors: BoxList, groundtruth_boxes: BoxList, groundtruth_labels=None, groundtruth_probabilities=None):
         """Assign classification and regression targets to each anchor.
 
         For a given set of anchors and groundtruth detections, match anchors
@@ -105,9 +105,8 @@ class TargetAssigner(object):
                 to None, groundtruth_labels assumes a binary problem where all
                 ground_truth boxes get a positive label (of 1).
 
-            groundtruth_weights: a float tensor of shape [M] indicating the weight to
-                assign to all anchors match to a particular groundtruth box. The weights
-                must be in [0., 1.]. If None, all weights are set to 1.
+            groundtruth_probabilities: a tensor of same shape as groundtruth_labels, representing the probability
+                that each box is a true positive.
 
             **params: Additional keyword arguments for specific implementations of the Matcher.
 
@@ -133,24 +132,17 @@ class TargetAssigner(object):
         if not isinstance(groundtruth_boxes, box_list.BoxList):
             raise ValueError('groundtruth_boxes must be an BoxList')
 
-        # device = anchors.device()
-        # if groundtruth_labels is None:
-        #     groundtruth_labels = torch.ones(groundtruth_boxes.num_boxes(), device=device).unsqueeze(0)
-        #     groundtruth_labels = groundtruth_labels.unsqueeze(-1)
-        # if groundtruth_weights is None:
-        #     num_gt_boxes = groundtruth_boxes.num_boxes()
-        #     if not num_gt_boxes:
-        #         num_gt_boxes = groundtruth_boxes.num_boxes()
-        #     groundtruth_weights = torch.ones([num_gt_boxes], device=device)
-
         match_quality_matrix = self._similarity_calc.compare(groundtruth_boxes, anchors)
         match = self._matcher.match(match_quality_matrix)
         reg_targets = self._create_regression_targets(anchors, groundtruth_boxes, match)
         cls_targets = self._create_classification_targets(groundtruth_labels, match)
-        #reg_weights = self._create_regression_weights(match, groundtruth_weights)
-        #cls_weights = self._create_classification_weights(match, groundtruth_weights)
+        prob_targets = match.gather_based_on_match(
+            groundtruth_probabilities,
+            unmatched_value=0.0,
+            ignored_value=0.0
+        )
 
-        return cls_targets, reg_targets, match
+        return cls_targets, prob_targets, reg_targets, match
 
     def _create_regression_targets(self, anchors: BoxList, groundtruth_boxes: BoxList, match: Match):
         """Returns a regression target for each anchor.

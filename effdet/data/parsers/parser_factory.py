@@ -3,17 +3,15 @@
 Copyright 2020 Ross Wightman
 """
 from .parser_coco import CocoParser
-from .parser_voc import VocParser
-from .parser_open_images import OpenImagesParser
 
 
 def create_parser(name, **kwargs):
     if name == 'coco':
         parser = CocoParser(**kwargs)
     elif name == 'voc':
-        parser = VocParser(**kwargs)
+        raise NotImplementedError('COCO only for probability approach')
     elif name == 'openimages':
-        parser = OpenImagesParser(**kwargs)
+        raise NotImplementedError('COCO only for probability approach')
     else:
         assert False, f'Unknown dataset parser ({name})'
     return parser

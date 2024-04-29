@@ -8,6 +8,7 @@ from .random_erasing import RandomErasing
 from effdet.anchors import AnchorLabeler
 from timm.data.distributed_sampler import OrderedDistributedSampler
 import os
+from loguru import logger
 
 MAX_NUM_INSTANCES = 100
 
@@ -28,10 +29,13 @@ class DetectionFastCollate:
             max_instances=MAX_NUM_INSTANCES,
             anchor_labeler=None,
     ):
-        instance_keys = instance_keys or {'bbox', 'bbox_ignore', 'cls'}
+        instance_keys = instance_keys or {'bbox', 'bbox_ignore', 'cls', 'confidence'}
         instance_shapes = instance_shapes or dict(
-            bbox=(max_instances, 4), bbox_ignore=(max_instances, 4), cls=(max_instances,))
-        self.instance_info = {k: dict(fill=instance_fill, shape=instance_shapes[k]) for k in instance_keys}
+            bbox=(max_instances, 4), bbox_ignore=(max_instances, 4), cls=(max_instances,), confidence=(max_instances,))
+        try:
+            self.instance_info = {k: dict(fill=instance_fill, shape=instance_shapes[k]) for k in instance_keys}
+        except KeyError as e:
+            raise ValueError(f"Invalid instance key {e}, valid keys are {instance_shapes.keys()}")
         self.max_instances = max_instances
         self.anchor_labeler = anchor_labeler
 
@@ -59,8 +63,10 @@ class DetectionFastCollate:
                         target_tensor[i, 0:num_elem] = tv[0:num_elem]
                     else:
                         # no need to pass gt tensors through when labeler in use
-                        if tk in ('bbox', 'cls'):
+                        if tk in ('bbox', 'cls', 'confidence'):
                             labeler_inputs[tk] = tv
+                        else:
+                            raise ValueError(f"Unsupported instance key {tk} with anchor labeler")
                 else:
                     # target tensor is an image-level annotation / metadata
                     if i == 0:
@@ -77,22 +83,27 @@ class DetectionFastCollate:
                         target[tk] = target_tensor
                     else:
                         target_tensor = target[tk]
+
                     target_tensor[i] = torch.tensor(tv, dtype=target_tensor.dtype)
 
             if self.anchor_labeler is not None:
-                cls_targets, box_targets, num_positives = self.anchor_labeler.label_anchors(
-                    labeler_inputs['bbox'], labeler_inputs['cls'], filter_valid=False)
+                # raise NotImplementedError(f"This is a testing detection thing maybe that I've not done yet?")
+                cls_targets, box_targets, probs_targets, num_positives = self.anchor_labeler.label_anchors(
+                    labeler_inputs['bbox'], labeler_inputs['cls'], labeler_inputs['confidence'], filter_valid=False)
                 if i == 0:
                     # first batch elem, create destination tensors, separate key per level
-                    for j, (ct, bt) in enumerate(zip(cls_targets, box_targets)):
+                    for j, (ct, bt, prob) in enumerate(zip(cls_targets, box_targets, probs_targets)):
                         labeler_outputs[f'label_cls_{j}'] = torch.zeros(
                             (batch_size,) + ct.shape, dtype=torch.int64)
                         labeler_outputs[f'label_bbox_{j}'] = torch.zeros(
                             (batch_size,) + bt.shape, dtype=torch.float32)
+                        labeler_outputs[f'label_prob_{j}'] = torch.zeros(
+                            (batch_size,) + prob.shape, dtype=torch.float32)
                     labeler_outputs['label_num_positives'] = torch.zeros(batch_size)
-                for j, (ct, bt) in enumerate(zip(cls_targets, box_targets)):
+                for j, (ct, bt, prob) in enumerate(zip(cls_targets, box_targets, probs_targets)):
                     labeler_outputs[f'label_cls_{j}'][i] = ct
                     labeler_outputs[f'label_bbox_{j}'][i] = bt
+                    labeler_outputs[f'label_prob_{j}'][i] = prob
                 labeler_outputs['label_num_positives'][i] = num_positives
         if labeler_outputs:
             target.update(labeler_outputs)

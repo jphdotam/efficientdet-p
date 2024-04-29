@@ -4,6 +4,7 @@ Copyright 2020 Ross Wightman
 """
 import numpy as np
 from pycocotools.coco import COCO
+
 from .parser import Parser
 from .parser_config import CocoParserCfg
 
@@ -50,6 +51,7 @@ class CocoParser(Parser):
         bboxes = []
         bboxes_ignore = []
         cls = []
+        confidences = []
 
         for i, ann in enumerate(ann_info):
             if ann.get('ignore', False):
@@ -71,6 +73,11 @@ class CocoParser(Parser):
             else:
                 bboxes.append(bbox)
                 cls.append(self.cat_id_to_label[ann['category_id']] if self.cat_id_to_label else ann['category_id'])
+                # confidence becomes probability - stored alongside the 'category_id' in the annotation, as 'confidence'
+                # must be between 0 and 100 inclusive - then rescale between 0 and 1
+                confidence = ann['confidence']
+                assert 0 <= confidence <= 100
+                confidences.append(confidence / 100)
 
         if bboxes:
             bboxes = np.array(bboxes, ndmin=2, dtype=np.float32)
@@ -85,7 +92,7 @@ class CocoParser(Parser):
             else:
                 bboxes_ignore = np.zeros((0, 4), dtype=np.float32)
 
-        ann = dict(bbox=bboxes, cls=cls)
+        ann = dict(bbox=bboxes, cls=cls, confidence=confidences)
 
         if self.include_bboxes_ignore:
             ann['bbox_ignore'] = bboxes_ignore

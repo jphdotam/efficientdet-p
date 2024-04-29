@@ -311,7 +311,7 @@ class AnchorLabeler(object):
         self.num_classes = num_classes
         self.indices_cache = {}
 
-    def label_anchors(self, gt_boxes, gt_classes, filter_valid=True):
+    def label_anchors(self, gt_boxes, gt_classes, gt_probs, filter_valid=True):
         """Labels anchors with ground truth inputs.
 
         Args:
@@ -319,6 +319,8 @@ class AnchorLabeler(object):
                 For each row, it stores [y0, x0, y1, x1] for four corners of a box.
 
             gt_classes: A integer tensor with shape [N, 1] representing groundtruth classes.
+
+            gt_probs: A float tensor with shape [N, 1] representing the probabilities that gt_class is present.
 
             filter_valid: Filter out any boxes w/ gt class <= -1 before assigning
 
@@ -333,16 +335,21 @@ class AnchorLabeler(object):
 
             num_positives: scalar tensor storing number of positives in an image.
         """
+        # raise NotImplementedError(f"This is a testing detection thing maybe that I've not done yet?")
+
+        assert gt_classes.shape == gt_probs.shape
         cls_targets_out = []
         box_targets_out = []
+        probs_targets_out = []
 
         if filter_valid:
             valid_idx = gt_classes > -1  # filter gt targets w/ label <= -1
             gt_boxes = gt_boxes[valid_idx]
             gt_classes = gt_classes[valid_idx]
+            gt_probs = gt_probs[valid_idx]
 
-        cls_targets, box_targets, matches = self.target_assigner.assign(
-            BoxList(self.anchors.boxes), BoxList(gt_boxes), gt_classes)
+        cls_targets, prob_targets, box_targets, matches = self.target_assigner.assign(
+            BoxList(self.anchors.boxes), BoxList(gt_boxes), gt_classes, gt_probs)
 
         # class labels start from 1 and the background class = -1
         cls_targets = (cls_targets - 1).long()
@@ -355,18 +362,23 @@ class AnchorLabeler(object):
             steps = feat_size[0] * feat_size[1] * self.anchors.get_anchors_per_location()
             cls_targets_out.append(cls_targets[count:count + steps].reshape([feat_size[0], feat_size[1], -1]))
             box_targets_out.append(box_targets[count:count + steps].reshape([feat_size[0], feat_size[1], -1]))
+            probs_targets_out.append(prob_targets[count:count + steps].reshape([feat_size[0], feat_size[1], -1]))
             count += steps
 
         num_positives = (matches.match_results > -1).float().sum()
 
-        return cls_targets_out, box_targets_out, num_positives
+        return cls_targets_out, box_targets_out, probs_targets_out, num_positives
 
-    def batch_label_anchors(self, gt_boxes, gt_classes, filter_valid=True):
+    def batch_label_anchors(self, gt_boxes, gt_classes, gt_probs, filter_valid=True):
+        assert gt_classes.shape == gt_probs.shape
+
         batch_size = len(gt_boxes)
         assert batch_size == len(gt_classes)
+        assert batch_size == len(gt_probs)
         num_levels = self.anchors.max_level - self.anchors.min_level + 1
         cls_targets_out = [[] for _ in range(num_levels)]
         box_targets_out = [[] for _ in range(num_levels)]
+        prob_targets_out = [[] for _ in range(num_levels)]
         num_positives_out = []
 
         anchor_box_list = BoxList(self.anchors.boxes)
@@ -377,10 +389,12 @@ class AnchorLabeler(object):
                 valid_idx = gt_classes[i] > -1  # filter gt targets w/ label <= -1
                 gt_box_list = BoxList(gt_boxes[i][valid_idx])
                 gt_class_i = gt_classes[i][valid_idx]
+                gt_probs_i = gt_probs[i][valid_idx]
             else:
                 gt_box_list = BoxList(gt_boxes[i])
                 gt_class_i = gt_classes[i]
-            cls_targets, box_targets, matches = self.target_assigner.assign(anchor_box_list, gt_box_list, gt_class_i)
+                gt_probs_i = gt_probs[i]
+            cls_targets, prob_targets, box_targets, matches = self.target_assigner.assign(anchor_box_list, gt_box_list, gt_class_i, gt_probs_i)
 
             # class labels start from 1 and the background class = -1
             cls_targets = (cls_targets - 1).long()
@@ -396,14 +410,17 @@ class AnchorLabeler(object):
                     cls_targets[count:count + steps].reshape([feat_size[0], feat_size[1], -1]))
                 box_targets_out[level_idx].append(
                     box_targets[count:count + steps].reshape([feat_size[0], feat_size[1], -1]))
+                prob_targets_out[level_idx].append(
+                    prob_targets[count:count + steps].reshape([feat_size[0], feat_size[1], -1]))
                 count += steps
                 if last_sample:
                     cls_targets_out[level_idx] = torch.stack(cls_targets_out[level_idx])
                     box_targets_out[level_idx] = torch.stack(box_targets_out[level_idx])
+                    prob_targets_out[level_idx] = torch.stack(prob_targets_out[level_idx])
 
             num_positives_out.append((matches.match_results > -1).float().sum())
             if last_sample:
                 num_positives_out = torch.stack(num_positives_out)
 
-        return cls_targets_out, box_targets_out, num_positives_out
+        return cls_targets_out, box_targets_out, prob_targets_out, num_positives_out
 

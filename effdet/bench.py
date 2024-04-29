@@ -149,7 +149,8 @@ class DetBenchTrain(nn.Module):
             self.anchor_labeler = AnchorLabeler(
                 self.anchors,
                 self.num_classes,
-                match_threshold=0.5,
+                # TODO:  Changed from 0.5 to 2 - check this does what I think, which is check what counts as a pos
+                match_threshold=0.2,
             )
         self.loss_fn = DetectionLoss(model.config)
 
@@ -160,11 +161,13 @@ class DetBenchTrain(nn.Module):
             assert 'label_num_positives' in target
             cls_targets = [target[f'label_cls_{l}'] for l in range(self.num_levels)]
             box_targets = [target[f'label_bbox_{l}'] for l in range(self.num_levels)]
+            prob_targets = [target[f'label_prob_{l}'] for l in range(self.num_levels)]
             num_positives = target['label_num_positives']
         else:
-            cls_targets, box_targets, num_positives = self.anchor_labeler.batch_label_anchors(
+            cls_targets, box_targets, prob_targets, num_positives = self.anchor_labeler.batch_label_anchors(
                 target['bbox'],
                 target['cls'],
+                target['confidence']
             )
 
         loss, class_loss, box_loss = self.loss_fn(
@@ -172,6 +175,7 @@ class DetBenchTrain(nn.Module):
             box_out,
             cls_targets,
             box_targets,
+            prob_targets,
             num_positives,
         )
         output = {'loss': loss, 'class_loss': class_loss, 'box_loss': box_loss}

@@ -5,54 +5,18 @@ https://github.com/google/automl/tree/master/efficientdet
 
 Copyright 2020 Ross Wightman
 """
+from typing import Optional, List, Tuple
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import Optional, List, Tuple
 
-
-def focal_loss_legacy(logits, targets, alpha: float, gamma: float, normalizer):
+def focal_loss(logits, targets, alpha: float, gamma: float, normalizer):
     """Compute the focal loss between `logits` and the golden `target` values.
 
-    'Legacy focal loss matches the loss used in the official Tensorflow impl for initial
-    model releases and some time after that. It eventually transitioned to the 'New' loss
-    defined below.
 
-    Focal loss = -(1-pt)^gamma * log(pt)
-    where pt is the probability of being classified to the true class.
-
-    Args:
-        logits: A float32 tensor of size [batch, height_in, width_in, num_predictions].
-
-        targets: A float32 tensor of size [batch, height_in, width_in, num_predictions].
-
-        alpha: A float32 scalar multiplying alpha to the loss from positive examples
-            and (1-alpha) to the loss from negative examples.
-
-        gamma: A float32 scalar modulating loss from hard and easy examples.
-
-         normalizer: A float32 scalar normalizes the total loss from all examples.
-
-    Returns:
-        loss: A float32 scalar representing normalized total loss.
-    """
-    positive_label_mask = targets == 1.0
-    cross_entropy = F.binary_cross_entropy_with_logits(logits, targets.to(logits.dtype), reduction='none')
-    neg_logits = -1.0 * logits
-    modulator = torch.exp(gamma * targets * neg_logits - gamma * torch.log1p(torch.exp(neg_logits)))
-
-    loss = modulator * cross_entropy
-    weighted_loss = torch.where(positive_label_mask, alpha * loss, (1.0 - alpha) * loss)
-    return weighted_loss / normalizer
-
-
-def new_focal_loss(logits, targets, alpha: float, gamma: float, normalizer, label_smoothing: float = 0.01):
-    """Compute the focal loss between `logits` and the golden `target` values.
-
-    'New' is not the best descriptor, but this focal loss impl matches recent versions of
-    the official Tensorflow impl of EfficientDet. It has support for label smoothing, however
-    it is a bit slower, doesn't jit optimize well, and uses more memory.
+    Note label_smoothing is removed as for probablistic losses we're already using smoothed probabilities, per se.
 
     Focal loss = -(1-pt)^gamma * log(pt)
     where pt is the probability of being classified to the true class.
@@ -63,7 +27,6 @@ def new_focal_loss(logits, targets, alpha: float, gamma: float, normalizer, labe
             and (1-alpha) to the loss from negative examples.
         gamma: A float32 scalar modulating loss from hard and easy examples.
         normalizer: Divide loss by this value.
-        label_smoothing: Float in [0, 1]. If > `0` then smooth the labels.
     Returns:
         loss: A float32 scalar representing normalized total loss.
     """
@@ -75,9 +38,6 @@ def new_focal_loss(logits, targets, alpha: float, gamma: float, normalizer, labe
     alpha_factor = targets * alpha + onem_targets * (1. - alpha)
     modulating_factor = (1. - p_t) ** gamma
 
-    # apply label smoothing for cross_entropy for each entry.
-    if label_smoothing > 0.:
-        targets = targets * (1. - label_smoothing) + .5 * label_smoothing
     ce = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
 
     # compute the final loss and return
@@ -147,15 +107,13 @@ def loss_fn(
         box_outputs: List[torch.Tensor],
         cls_targets: List[torch.Tensor],
         box_targets: List[torch.Tensor],
+        prob_targets: List[torch.Tensor],
         num_positives: torch.Tensor,
         num_classes: int,
         alpha: float,
         gamma: float,
         delta: float,
-        box_loss_weight: float,
-        label_smoothing: float = 0.,
-        legacy_focal: bool = False,
-        ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        box_loss_weight: float) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Computes total detection loss.
     Computes total detection loss including box and class loss from all levels.
     Args:
@@ -168,6 +126,8 @@ def loss_fn(
         cls_targets: groundtruth class targets.
 
         box_targets: groundtrusth box targets.
+
+        prob_targets: groundtruth prob targets.
 
         num_positives: num positive grountruth anchors
 
@@ -188,24 +148,25 @@ def loss_fn(
     for l in range(levels):
         cls_targets_at_level = cls_targets[l]
         box_targets_at_level = box_targets[l]
+        prob_targets_at_level = prob_targets[l]
 
         # Onehot encoding for classification labels.
         cls_targets_at_level_oh = one_hot(cls_targets_at_level, num_classes)
 
+        # Change 1s to probability instead by simply multiplying - 1s -> prob, 0s stay 0
+        cls_targets_at_level_oh = cls_targets_at_level_oh * prob_targets_at_level.unsqueeze(-1)
+
         bs, height, width, _, _ = cls_targets_at_level_oh.shape
         cls_targets_at_level_oh = cls_targets_at_level_oh.view(bs, height, width, -1)
         cls_outputs_at_level = cls_outputs[l].permute(0, 2, 3, 1).float()
-        if legacy_focal:
-            cls_loss = focal_loss_legacy(
-                cls_outputs_at_level, cls_targets_at_level_oh,
-                alpha=alpha, gamma=gamma, normalizer=num_positives_sum)
-        else:
-            cls_loss = new_focal_loss(
-                cls_outputs_at_level, cls_targets_at_level_oh,
-                alpha=alpha, gamma=gamma, normalizer=num_positives_sum, label_smoothing=label_smoothing)
+
+        # Focal loss
+        cls_loss = focal_loss(
+            cls_outputs_at_level, cls_targets_at_level_oh,
+            alpha=alpha, gamma=gamma, normalizer=num_positives_sum)
         cls_loss = cls_loss.view(bs, height, width, -1, num_classes)
         cls_loss = cls_loss * (cls_targets_at_level != -2).unsqueeze(-1)
-        cls_losses.append(cls_loss.sum())   # FIXME reference code added a clamp here at some point ...clamp(0, 2))
+        cls_losses.append(cls_loss.sum())  # FIXME reference code added a clamp here at some point ...clamp(0, 2))
 
         box_losses.append(_box_loss(
             box_outputs[l].permute(0, 2, 3, 1).float(),
@@ -220,11 +181,7 @@ def loss_fn(
     return total_loss, cls_loss, box_loss
 
 
-loss_jit = torch.jit.script(loss_fn)
-
-
 class DetectionLoss(nn.Module):
-
     __constants__ = ['num_classes']
 
     def __init__(self, config):
@@ -235,9 +192,6 @@ class DetectionLoss(nn.Module):
         self.gamma = config.gamma
         self.delta = config.delta
         self.box_loss_weight = config.box_loss_weight
-        self.label_smoothing = config.label_smoothing
-        self.legacy_focal = config.legacy_focal
-        self.use_jit = config.jit_loss
 
     def forward(
             self,
@@ -245,15 +199,16 @@ class DetectionLoss(nn.Module):
             box_outputs: List[torch.Tensor],
             cls_targets: List[torch.Tensor],
             box_targets: List[torch.Tensor],
+            prob_targets: List[torch.Tensor],
             num_positives: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-
         l_fn = loss_fn
-        if not torch.jit.is_scripting() and self.use_jit:
-            # This branch only active if parent / bench itself isn't being scripted
-            # NOTE: I haven't figured out what to do here wrt to tracing, is it an issue?
-            l_fn = loss_jit
-
-        return l_fn(
-            cls_outputs, box_outputs, cls_targets, box_targets, num_positives,
-            num_classes=self.num_classes, alpha=self.alpha, gamma=self.gamma, delta=self.delta,
-            box_loss_weight=self.box_loss_weight, label_smoothing=self.label_smoothing, legacy_focal=self.legacy_focal)
+        return l_fn(cls_outputs,
+                    box_outputs,
+                    cls_targets,
+                    box_targets,
+                    prob_targets,
+                    num_positives,
+                    num_classes=self.num_classes,
+                    alpha=self.alpha,
+                    gamma=self.gamma, delta=self.delta,
+                    box_loss_weight=self.box_loss_weight)

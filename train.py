@@ -166,11 +166,6 @@ parser.add_argument('--recount', type=int, default=1,
 parser.add_argument('--train-interpolation', type=str, default='random',
                     help='Training interpolation (random, bilinear, bicubic default: "random")')
 
-# loss
-parser.add_argument('--smoothing', type=float, default=None, help='override model config label smoothing')
-utils.add_bool_arg(parser, 'jit-loss', default=None, help='override model config for torchscript jit loss fn')
-utils.add_bool_arg(parser, 'legacy-focal', default=None, help='override model config to use legacy focal loss')
-
 # Model Exponential Moving Average
 parser.add_argument('--model-ema', action='store_true', default=False,
                     help='Enable tracking moving average of model weights')
@@ -295,9 +290,6 @@ def main():
             pretrained=args.pretrained,
             pretrained_backbone=args.pretrained_backbone,
             redundant_bias=args.redundant_bias,
-            label_smoothing=args.smoothing,
-            legacy_focal=args.legacy_focal,
-            jit_loss=args.jit_loss,
             soft_nms=args.soft_nms,
             bench_labeler=args.bench_labeler,
             checkpoint_path=args.initial_checkpoint,

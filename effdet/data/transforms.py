@@ -103,6 +103,7 @@ class ResizePad:
             valid_indices = (bbox[:, :2] < bbox[:, 2:4]).all(axis=1)
             anno['bbox'] = bbox[valid_indices, :]
             anno['cls'] = anno['cls'][valid_indices]
+            anno['confidence'] = np.array(anno['confidence'])[valid_indices]
 
         anno['img_scale'] = 1. / img_scale  # back to original
 
@@ -165,6 +166,7 @@ class RandomResizePad:
             valid_indices = (bbox[:, :2] < bbox[:, 2:4]).all(axis=1)
             anno['bbox'] = bbox[valid_indices, :]
             anno['cls'] = anno['cls'][valid_indices]
+            anno['confidence'] = np.array(anno['confidence'])[valid_indices]
 
         anno['img_scale'] = 1. / img_scale  # back to original
 
