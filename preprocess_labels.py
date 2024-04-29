@@ -89,7 +89,7 @@ def main(raw_coco_path: Path = r"E:\Dropbox\Work\Papers\ALGE\data\_annotations.c
                         current_data["annotations"].append(new_annotation)
 
                         if all(img["id"] != new_annotation["image_id"] for img in current_data["images"]):
-                            png_path = os.path.splitext(dcm_path)[0] + ".png"
+                            png_path = (os.path.splitext(dcm_path)[0] + ".png").replace('\\', '/')
                             new_image_entry = {
                                 "id": new_annotation["image_id"],
                                 "file_name": png_path,
@@ -130,7 +130,7 @@ def main(raw_coco_path: Path = r"E:\Dropbox\Work\Papers\ALGE\data\_annotations.c
             img = (img - img_min) / (img_max - img_min)
             img = (img * 255).astype('uint8')
 
-            dest_path = os.path.join(dicom_root, ds_name, img_row["file_name"])
+            dest_path = os.path.join(dicom_root, ds_name, img_row["file_name"]).replace('\\', '/')
             if not os.path.exists(dest_path):
                 os.makedirs(os.path.dirname(dest_path), exist_ok=True)
                 # save img as a png
