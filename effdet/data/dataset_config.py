@@ -27,6 +27,16 @@ class Coco2017Cfg(CocoCfg):
 
 
 @dataclass
+class LGECfg(CocoCfg):
+    variant: str = 'LGE'
+    num_classes: int = 3  # 4x infarct, 4x NI, 4 xIP -> infarct/NI/IP
+    splits: Dict[str, dict] = field(default_factory=lambda: dict(
+        train=dict(ann_filename='annotations/train.json', img_dir='train', has_labels=True),
+        val=dict(ann_filename='annotations/val.json', img_dir='val', has_labels=True),
+        test=dict(ann_filename='annotations/test.json', img_dir='test', has_labels=True)))
+
+
+@dataclass
 class Coco2014Cfg(CocoCfg):
     variant: str = '2014'
     splits: Dict[str, dict] = field(default_factory=lambda: dict(

@@ -19,8 +19,10 @@ def create_dataset(name, root, splits=('train', 'val')):
     root = Path(root)
     dataset_cls = DetectionDatset
     datasets = OrderedDict()
-    if name.startswith('coco'):
-        if 'coco2014' in name:
+    if name.startswith('coco') or name.startswith('lge'):
+        if 'lge' in name:
+            dataset_cfg = LGECfg()
+        elif 'coco2014' in name:
             dataset_cfg = Coco2014Cfg()
         else:
             dataset_cfg = Coco2017Cfg()
